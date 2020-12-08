@@ -1,4 +1,4 @@
-## brainf__k-hs
+# brainf__k-hs
 A [brainf__k](https://en.wikipedia.org/wiki/Brainfuck) interpreter written in Haskell
 
 ## Build
@@ -12,7 +12,7 @@ ghc --make brainf__k.hs -o bf -O2
 ## Usage
 Call `bf` with a brainf__k source file as its only argument.
 
-# Example
+### Example
 ```
 wget "https://copy.sh/brainfuck/prog/hanoi.bf"
 ./bf hanoi.bf
