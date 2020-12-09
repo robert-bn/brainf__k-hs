@@ -2,7 +2,7 @@
 Brainf__k-hs is a [brainf__k](https://en.wikipedia.org/wiki/Brainfuck) interpreter written in Haskell.
 
 ## Build
-Clone the git repository and build using GHC.
+Clone the git repository and build using GHC. I have tested it on GHC version 8.8.4, but newer versions may also work.
 ```
 git clone https://github.com/robert-bn/brainf__k-hs
 cd brainf__k-hs/
