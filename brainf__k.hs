@@ -1,8 +1,6 @@
 {-#language FlexibleContexts#-}
-{-#language BangPatterns#-}
-
-import Control.Monad.State (MonadState, execStateT, MonadIO, get, modify, liftIO)
-import Control.Monad.Loops (untilM_)
+import Control.Monad.State (MonadState, execStateT, evalStateT, MonadIO, get, modify, liftIO)
+import Control.Monad.Loops (whileM_)
 import Data.Char (chr, isSpace)
 import Data.Word (Word8)
 import System.Environment (getArgs)
@@ -10,84 +8,51 @@ import Data.Either (partitionEithers)
 import Zipper
 import Text.ParserCombinators.ReadP hiding (get)
 
-data Op = LEFT          -- <
-        | RIGHT         -- > 
-        | OUTPUT        -- ,
-        | INPUT         -- .
-        | ADD Word8     -- Adds to the current memory address (+ is equivalent to Add 1, and - to Add 255)
-        | ZERO          -- Sets current memory address to 0 (this is equivalent to "[-]" in brainfuck)
+data Op = LEFT            -- <
+        | RIGHT           -- > 
+        | OUTPUT          -- ,
+        | INPUT           -- .
+        | ADD Int         -- Adds to the current memory address (+ is equivalent to Add 1, and - to Add 255)
+        | ZERO            -- Sets current memory address to 0 (this is equivalent to "[-]" in brainfuck)
         | LOOP [Op]       -- Loop expressions enclosed by []
     deriving (Show, Eq)
 
-type Memory = Zipper Word8
-
-exec :: (MonadState Memory m, MonadIO m) => [Op] -> m ()
-exec [] = return ()
-exec (c:cs) = case c of
-    LEFT         -> modify unsafeLeft     >> exec cs
-    RIGHT        -> modify unsafeRight    >> exec cs 
-    ADD n        -> modify (inplace (+n)) >> exec cs
-    ZERO         -> modify (replace 0)    >> exec cs
-    OUTPUT       -> do
-                        m <- get 
-                        liftIO . putChar . chr . fromEnum . current $ m
-                        exec cs
-    INPUT        -> do
-                        inputChar <- liftIO getChar
-                        modify . replace . toEnum . fromEnum $ inputChar
-                        exec cs
-    LOOP subExpr -> do
-                        m <- get
-                        if (current m /= 0)  -- If value at the current data point is 0 jump forward to next ]
-                            then untilM_ (exec subExpr) (get >>= return . (==0) . current)
-                            else return ()
-                        exec cs
-
-
+type Memory = Zipper Int
 
 parse :: String -> [Op]
 parse = fst . last . readP_to_S (many operationP) . filter (flip elem "<>,.+-[]")
-    where operationP = choice [ char '<' >> return LEFT
-                              , char ',' >> return INPUT
-                              , char '>' >> return RIGHT
-                              , char '.' >> return OUTPUT
-                              , char '+' >> return (ADD 1)
-                              , char '-' >> return (ADD 255)
+    where operationP = choice [ do {char '<'; return LEFT}
+                              , do {char ','; return INPUT}
+                              , do {char '>'; return RIGHT}
+                              , do {char '.'; return OUTPUT}
+                              , do {char '+'; return (ADD 1)}
+                              , do {char '-'; return (ADD (-1))}
                               , do {char '['; subExpr <- many operationP; char ']'; return (LOOP subExpr)}
                               ]
 
 optimize :: [Op] -> [Op]
-optimize [] = []
-{-
-    remove [-] loops that set the current memory address to 0
-    (technically causes a mild inconsistency with the brainfuck
-    language, as some loops with
-    only + or - in might never terminate, for example the brainfuck
-    program "+[-+]" would never terminate, but with this optimization
-    it would terminate). Fortunately for any terminating program, this
-    should not be an issue.
--}
-optimize (ADD n:ADD m:cs) = optimize (ADD (n+m):cs) -- concatenate adjacent additions to the current memory address 
-optimize (LOOP xs:cs) = case xs of
-                             []      -> optimize cs
-                             [ADD _] -> ZERO : optimize cs   -- eliminate loops that exist only to set current memory address to 0, typically written [-]
-                             ys      -> LOOP (optimize ys) : optimize cs
-optimize (c:cs) = c : optimize cs
+optimize []                = []
+optimize (ADD n:ADD m:cs)  = optimize (ADD (n+m):cs) -- concatenate adjacent additions to the current memory address 
+optimize (LOOP [ADD _]:cs) =  ZERO : optimize cs   -- eliminate loops that exist only to set current memory address to 0, typically written [-]
+optimize (LOOP xs:cs)      = LOOP (optimize xs) : optimize cs
+optimize (c:cs)            = c : optimize cs
 
-
-evalProgram :: [Op] -> IO ()
-evalProgram cs = do
-    execStateT (exec cs) initState
-    return ()
-    where
-        initState :: Memory
-        initState = Zipper (repeat 0) 0 (repeat 0)
-
+exec :: (MonadState Memory m, MonadIO m) => Op -> m ()
+exec LEFT           = modify unsafeLeft
+exec RIGHT          = modify unsafeRight
+exec (ADD n)        = modify (inplace (+n))
+exec ZERO           = modify (replace 0)
+exec OUTPUT         = get >>= liftIO . putChar . chr . current
+exec INPUT          = liftIO getChar >>= modify . replace . fromEnum
+exec (LOOP subExpr) = whileM_ (get >>= return . (/=0) . current) (mapM_ exec subExpr)
     
 main :: IO ()
 main = do
     f:_ <- getArgs
     bf  <- readFile f
-    let !program = optimize (parse bf)
-    evalProgram program
-    
+    let program = optimize (parse bf)
+    evalStateT (mapM_ exec program) emptyMemory
+    return ()
+    where
+        emptyMemory :: Memory
+        emptyMemory = (Zipper (repeat 0) 0 (repeat 0))
